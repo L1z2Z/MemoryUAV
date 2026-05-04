@@ -1,15 +1,15 @@
 #!/bin/bash
 # change the root_dir and dataset_path to your own path
 
-root_dir=/home/airport/airdrone/TravelUAV/TravelUAV # TravelUAV directory
+root_dir=/home/hhl/TravelUAV/TravelUAV/ # TravelUAV directory
 model_dir=$root_dir/Model/LLaMA-UAV
 deepspeed \
     --include localhost:0,1,2,3,4,5,6,7 \
     --master_port 29101 \
     $model_dir/llamavid/train/train_uav/train_uav_notice.py \
     --data_path $root_dir/data/uav_dataset/trainset.json \
-    --dataset_path /path/to/dataset/\
-    --output_dir $model_dir/work_dirs/llama-vid-7b-pretrain-224-uav-full-data-lora32 \
+    --dataset_path /data6/shared/TravelUAV/ \
+    --output_dir $model_dir/work_dirs/reproduce \
     --deepspeed $model_dir/scripts/zero2.json \
     --model_name_or_path $model_dir/model_zoo/vicuna-7b-v1.5/ \
     --version imgsp_uav \
@@ -34,7 +34,7 @@ deepspeed \
     --gradient_accumulation_steps 2 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 1000 \
+    --save_steps 1111 \
     --save_total_limit 1 \
     --learning_rate 5e-4 \
     --weight_decay 0. \
@@ -48,3 +48,7 @@ deepspeed \
     --lazy_preprocess True \
     --report_to wandb \
     --lora_enable True \
+    --lora_r 64 \
+    --lora_alpha 16 \
+    --lora_dropout 0.05 \
+    --lora_bias none \

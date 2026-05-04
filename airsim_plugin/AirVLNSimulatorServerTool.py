@@ -435,6 +435,10 @@ def KillAirVLN() -> None:
     time.sleep(1)
     return
 
+def _to_str(x):
+    if isinstance(x, bytes):
+        return x.decode("utf-8")
+    return x
 
 class EventHandler(object):
     def __init__(self):
@@ -458,6 +462,10 @@ class EventHandler(object):
         return True
 
     def _open_scenes(self, ip: str , scen_id_gpu_list: list):
+        scen_id_gpu_list = [
+            (_to_str(scene_id), int(gpu))
+            for scene_id, gpu in scen_id_gpu_list
+        ]
         print(
             "{}\t关闭场景中".format(
                 str(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())),
@@ -580,6 +588,10 @@ class EventHandler(object):
                     )
         
     def reopen_scenes(self, ip: str, scen_id_gpu_list: list):
+        scen_id_gpu_list = [
+            (_to_str(scene_id), int(gpu))
+            for scene_id, gpu in scen_id_gpu_list
+        ]
         print(
             "{}\tSTART reopen_scenes".format(
                 str(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())),

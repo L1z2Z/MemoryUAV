@@ -124,7 +124,7 @@ class AirVLNENV:
         print('Loading dataset metainfo...')
         trajectorys_path = sorted(trajectorys_path)
         for merged_json in tqdm.tqdm(trajectorys_path):
-            merged_json = merged_json.replace('data6', 'data5') # it is a fix since the mark.json saved on data5
+            # merged_json = merged_json.replace('data6', 'data5') # it is a fix since the mark.json saved on data5
             path_parts = merged_json.strip('/').split('/')
             map_name, seq_name = path_parts[-3], path_parts[-2]
             if (len(self.activate_maps) > 0 and map_name not in self.activate_maps) or seq_name in skipped_trajectory_set:

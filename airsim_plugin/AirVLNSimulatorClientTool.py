@@ -17,6 +17,10 @@ sys.path.insert(0, cur_path+"/..")
 
 from utils.logger import logger
 
+def _to_str(x):
+    if isinstance(x, bytes):
+        return x.decode("utf-8")
+    return x
 
 class BaseSensor:
     def __init__(self) -> None:
@@ -197,11 +201,15 @@ class AirVLNSimulatorClientTool:
             assert len(result[1]) == 2, '打开场景失败'
             print('waiting for airsim connection...')
             time.sleep(3 * len(self.machines_info[index]['open_scenes']) + 35)
-            ip = result[1][0]
+            ip = _to_str(result[1][0])
+            if isinstance(ip, bytes):
+                ip = ip.decode("utf-8")
             ports = result[1][1]
+            ports = [int(p) for p in ports]
             self.airsim_ip = ip
             self.airsim_ports = ports
-            assert str(ip) == str(socket_client.address._host), '打开场景失败'
+            # 兼容 msgpackrpc 返回 bytes 的情况
+            assert ip == str(socket_client.address._host), f"打开场景失败: returned ip={ip}, expected={socket_client.address._host}"
             assert len(ports) == len(self.machines_info[index]['open_scenes']), '打开场景失败'
             for i, port in enumerate(ports):
                 if self.machines_info[index]['open_scenes'][i] is None:

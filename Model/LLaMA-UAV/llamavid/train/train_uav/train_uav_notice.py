@@ -1045,6 +1045,33 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
                 eval_dataset=None,
                 data_collator=data_collator)
 
+def check_lora_targets(model, target_modules):
+    import torch.nn as nn
+
+    matched = []
+    bad = []
+
+    for name, module in model.named_modules():
+        short_name = name.split(".")[-1]
+        if short_name in target_modules:
+            matched.append((name, type(module).__name__))
+            if not isinstance(module, nn.Linear):
+                bad.append((name, type(module).__name__))
+
+    print("\n===== LoRA target check =====")
+    print(f"target_modules = {target_modules}")
+    print(f"matched modules = {len(matched)}")
+
+    for name, typ in matched[:80]:
+        print(name, typ)
+
+    if bad:
+        print("\nBad LoRA targets:")
+        for name, typ in bad:
+            print(name, typ)
+        raise ValueError("LoRA target matched non-Linear modules.")
+
+    print("LoRA target check passed.\n")
 
 def train():
     global local_rank
@@ -1114,10 +1141,19 @@ def train():
 
     if training_args.lora_enable:
         from peft import LoraConfig, get_peft_model
+        target_modules = [
+            "v_proj",
+            "up_proj",
+            "gate_proj",
+            "o_proj",
+            "q_proj",
+            "k_proj",
+            "down_proj",
+        ]
         lora_config = LoraConfig(
             r=training_args.lora_r,
             lora_alpha=training_args.lora_alpha,
-            target_modules=find_all_linear_names(model),
+            target_modules=target_modules,
             layers_to_transform=[i for i in range(0, 32)], 
             lora_dropout=training_args.lora_dropout,
             bias=training_args.lora_bias,
@@ -1129,6 +1165,7 @@ def train():
             if training_args.fp16:
                 model.to(torch.float16)
         rank0_print("Adding LoRA adapters...")
+        check_lora_targets(model, target_modules)
         model = get_peft_model(model, lora_config)
 
     if 'mpt' in model_args.model_name_or_path:
