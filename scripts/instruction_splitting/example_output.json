@@ -1,0 +1,51 @@
+[
+  {
+    "id": 1,
+    "corresponding_id": 0,
+    "text": "inferred: first intersection",
+    "position": [],
+    "environment": "intersection",
+    "action": "pass"
+  },
+  {
+    "id": 2,
+    "corresponding_id": 0,
+    "text": "you'll see a red \"Coca-Cola\" sign after the first intersection on your right",
+    "position": [],
+    "environment": "a red Coca-Cola sign",
+    "action": "pass"
+  },
+  {
+    "id": 3,
+    "corresponding_id": 0,
+    "text": "turn left at the second intersection with a red car",
+    "position": [],
+    "environment": "intersection with a red car",
+    "action": "turn left"
+  },
+  {
+    "id": 4,
+    "corresponding_id": 6,
+    "text": "turn right at next intersection",
+    "position": [],
+    "environment": "intersection",
+    "action": "turn right"
+  },
+  {
+    "id": 5,
+    "corresponding_id": 0,
+    "text": "continue straight until you reach the park",
+    "position": [],
+    "environment": "park",
+    "action": "turn around"
+  },
+  {
+    "id": 6,
+    "corresponding_id": 4,
+    "text": "go back to the intersection where you turned right",
+    "position": [],
+    "environment": "intersection",
+    "action": "stop"
+  }
+]
+

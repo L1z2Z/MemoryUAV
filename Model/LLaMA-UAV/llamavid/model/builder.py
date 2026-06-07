@@ -24,8 +24,8 @@ from llamavid.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN
 from peft import PeftModel
 
 
-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda"):
-    kwargs = {"device_map": device_map}
+def load_pretrained_model(model_path, model_base, model_name, batch_size, load_8bit=False, load_4bit=False, device_map="auto", device="cuda"):
+    kwargs = {"device_map": device_map, "batch_size": batch_size}
 
     if load_8bit:
         kwargs['load_in_8bit'] = True

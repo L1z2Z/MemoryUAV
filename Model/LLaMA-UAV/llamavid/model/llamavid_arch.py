@@ -478,6 +478,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
     def prepare_inputs_labels_for_multimodal(
         self, input_ids, attention_mask, past_key_values, labels, images, prompts=None, historys=None, special_token_dict=None
     ): 
+        # import pdb; pdb.set_trace() # 1. 查看所有输入变量。 2. 寻找输出的 new_input_embeds 是怎么来的，
         if prompts is None and hasattr(self, 'prompts'):
             prompts = self.prompts
         torch.cuda.empty_cache()

@@ -96,7 +96,7 @@ class AirVLNENV:
         self.ori_raw_data = load_data
         logger.info('Loaded dataset {}.'.format(len(self.eval_json_path)))
         self.index_data = 0
-        self.data = self.ori_raw_data
+        self.data = self.ori_raw_data # list[dict]
         
         if dataset_group_by_scene:
             self.data = self._group_scenes()
@@ -140,6 +140,14 @@ class AirVLNENV:
                                 airsim.Quaternionr(closest_area_info[13], closest_area_info[14], closest_area_info[15], closest_area_info[12]))
                 obj_scale = airsim.Vector3r(closest_area_info[17], closest_area_info[17], closest_area_info[17])
                 asset_name = closest_area_info[16]
+            # patch for memory module
+            instruction_units_json = merged_json.replace('merged_data.json', 'instruction_units.json')
+            if os.path.exists(instruction_units_json):
+                with open(instruction_units_json, 'r') as f:
+                    instruction_units = json.load(f)
+                    instruction_units = [unit_str['environment'] for unit_str in instruction_units]
+            else:
+                instruction_units = None
             traj_info = {}
             frames = []
             traj_dir = '/' + '/'.join(path_parts[:-1])
@@ -155,6 +163,7 @@ class AirVLNENV:
             traj_info['object'] = {'pose': obj_pose, 'scale': obj_scale, 'asset_name': asset_name}
             traj_info['object_position'] = object_position
             traj_info['length'] = len(frames)
+            traj_info['instruction_units'] = instruction_units
             data.append(traj_info)
         random.setstate(old_state)      # Recover the state of the random generator
         return data
