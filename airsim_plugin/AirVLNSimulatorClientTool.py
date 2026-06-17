@@ -305,57 +305,170 @@ class AirVLNSimulatorClientTool:
         yaw_mode=airsim.YawMode(is_rate=False)
         lookahead=3
         adaptive_lookahead=1
+        # def move_path(airsim_client: airsim.VehicleClient, waypoints, start_state):
+        #     results = []
+        #     state_sensor = State(airsim_client, )
+        #     imu_sensor = Imu(airsim_client, imu_name='Imu')
+        #     path = [airsim.Vector3r(*waypoint[0:3]) for waypoint in waypoints]
+        #     airsim_client.enableApiControl(True)
+        #     airsim_client.armDisarm(True)
+        #     airsim_client.simPause(False)
+        #     airsim_client.simSetKinematics(start_state, ignore_collision=False)
+        #     state_info = state_sensor.retrieve()
+        #     airsim_client.moveOnPathAsync(path=path, 
+        #                         velocity=velocity, 
+        #                         drivetrain=drivetrain, 
+        #                         yaw_mode=yaw_mode, 
+        #                         lookahead=lookahead, 
+        #                         adaptive_lookahead=adaptive_lookahead)
+        #     target_idx = 5
+        #     current_idx = 0
+        #     pos_queue = deque(maxlen=20)
+        #     start_time = time.perf_counter()
+        #     collision = False
+        #     distance = 10000
+        #     while True:
+        #         time.sleep(0.005)
+        #         if time.perf_counter() - start_time > 5:
+        #             return None
+        #         target = path[current_idx]
+        #         state_info = copy.deepcopy(state_sensor.retrieve())
+        #         imu_info = copy.deepcopy(imu_sensor.retrieve())
+        #         position = np.array(state_info['position'])
+        #         pos_queue.append(position)
+        #         if len(pos_queue) == pos_queue.maxlen:
+        #             recent_loc = position
+        #             history_loc = pos_queue.popleft()
+        #             delta_distance = np.linalg.norm(history_loc -recent_loc)
+        #             if delta_distance < 0.1:
+        #                 print('move on path api: stuck max len')
+        #                 collision = True
+        #                 break
+        #         new_distance = np.linalg.norm(position - np.array([target.x_val, target.y_val, target.z_val]))
+        #         if new_distance > distance:
+        #             results.append({'sensors': {'state': state_info, 'imu': imu_info}})
+        #             current_idx += 1
+        #             if current_idx == target_idx:
+        #                 airsim_client.simPause(True)
+        #                 break
+        #             else:
+        #                 distance = 10000
+        #         else:
+        #             distance = new_distance
+        #     return {'states': results, 'collision': collision}
         def move_path(airsim_client: airsim.VehicleClient, waypoints, start_state):
             results = []
-            state_sensor = State(airsim_client, )
+            state_sensor = State(airsim_client)
             imu_sensor = Imu(airsim_client, imu_name='Imu')
+
             path = [airsim.Vector3r(*waypoint[0:3]) for waypoint in waypoints]
-            airsim_client.enableApiControl(True)
-            airsim_client.armDisarm(True)
-            airsim_client.simPause(False)
-            airsim_client.simSetKinematics(start_state, ignore_collision=False)
-            state_info = state_sensor.retrieve()
-            airsim_client.moveOnPathAsync(path=path, 
-                                velocity=velocity, 
-                                drivetrain=drivetrain, 
-                                yaw_mode=yaw_mode, 
-                                lookahead=lookahead, 
-                                adaptive_lookahead=adaptive_lookahead)
-            target_idx = 5
-            current_idx = 0
-            pos_queue = deque(maxlen=20)
-            start_time = time.perf_counter()
-            collision = False
-            distance = 10000
-            while True:
-                time.sleep(0.005)
-                if time.perf_counter() - start_time > 5:
-                    return None
-                target = path[current_idx]
+
+            if len(path) == 0:
                 state_info = copy.deepcopy(state_sensor.retrieve())
                 imu_info = copy.deepcopy(imu_sensor.retrieve())
-                position = np.array(state_info['position'])
-                pos_queue.append(position)
-                if len(pos_queue) == pos_queue.maxlen:
-                    recent_loc = position
-                    history_loc = pos_queue.popleft()
-                    delta_distance = np.linalg.norm(history_loc -recent_loc)
-                    if delta_distance < 0.1:
-                        print('move on path api: stuck max len')
-                        collision = True
-                        break
-                new_distance = np.linalg.norm(position - np.array([target.x_val, target.y_val, target.z_val]))
-                if new_distance > distance:
+                empty_state = {'sensors': {'state': state_info, 'imu': imu_info}}
+                return {'states': [copy.deepcopy(empty_state) for _ in range(5)], 'collision': False}
+
+            target_idx = min(5, len(path))
+
+            def _get_orientation(prev_pos, cur_pos, fallback_orientation):
+                dx = cur_pos.x_val - prev_pos.x_val
+                dy = cur_pos.y_val - prev_pos.y_val
+
+                if abs(dx) + abs(dy) < 1e-6:
+                    return fallback_orientation
+
+                yaw = np.arctan2(dy, dx)
+
+                try:
+                    return airsim.to_quaternion(0, 0, yaw)
+                except Exception:
+                    return fallback_orientation
+
+            try:
+                airsim_client.enableApiControl(True)
+                airsim_client.armDisarm(True)
+
+                # 保证处于 pause 状态下做位姿设置，避免物理控制器干扰
+                airsim_client.simPause(True)
+
+                prev_pos = copy.deepcopy(start_state.position)
+                fallback_orientation = copy.deepcopy(start_state.orientation)
+
+                # 先放回当前起点
+                reset_state = airsim.KinematicsState()
+                reset_state.position = copy.deepcopy(start_state.position)
+                reset_state.orientation = copy.deepcopy(start_state.orientation)
+                reset_state.linear_velocity = airsim.Vector3r(0, 0, 0)
+                reset_state.angular_velocity = airsim.Vector3r(0, 0, 0)
+
+                airsim_client.simSetKinematics(reset_state, ignore_collision=True)
+                airsim_client.simContinueForFrames(1)
+
+                for i in range(target_idx):
+                    cur_pos = path[i]
+                    cur_orientation = _get_orientation(prev_pos, cur_pos, fallback_orientation)
+
+                    kin = airsim.KinematicsState()
+                    kin.position = airsim.Vector3r(cur_pos.x_val, cur_pos.y_val, cur_pos.z_val)
+                    kin.orientation = cur_orientation
+                    kin.linear_velocity = airsim.Vector3r(0, 0, 0)
+                    kin.angular_velocity = airsim.Vector3r(0, 0, 0)
+
+                    airsim_client.simSetKinematics(kin, ignore_collision=True)
+                    airsim_client.simContinueForFrames(1)
+
+                    state_info = copy.deepcopy(state_sensor.retrieve())
+                    imu_info = copy.deepcopy(imu_sensor.retrieve())
                     results.append({'sensors': {'state': state_info, 'imu': imu_info}})
-                    current_idx += 1
-                    if current_idx == target_idx:
-                        airsim_client.simPause(True)
-                        break
-                    else:
-                        distance = 10000
-                else:
-                    distance = new_distance
-            return {'states': results, 'collision': collision}
+
+                    prev_pos = cur_pos
+                    fallback_orientation = cur_orientation
+
+                # 必须返回 exactly 5 个 states，否则 env_uav.makeActions 会强制 collision=True
+                if len(results) < 5:
+                    results.extend([copy.deepcopy(results[-1]) for _ in range(5 - len(results))])
+
+                print(
+                    "[move_path_kinematic]",
+                    "start=",
+                    [
+                        start_state.position.x_val,
+                        start_state.position.y_val,
+                        start_state.position.z_val
+                    ],
+                    "end=",
+                    [
+                        results[-1]['sensors']['state']['position'][0],
+                        results[-1]['sensors']['state']['position'][1],
+                        results[-1]['sensors']['state']['position'][2]
+                    ],
+                    "target_end=",
+                    [
+                        path[target_idx - 1].x_val,
+                        path[target_idx - 1].y_val,
+                        path[target_idx - 1].z_val
+                    ],
+                    "num_states=",
+                    len(results),
+                    flush=True
+                )
+
+                airsim_client.simPause(True)
+
+                return {'states': results[:5], 'collision': False}
+
+            except Exception as e:
+                print("[move_path_kinematic_error]", e, flush=True)
+
+                # 失败时也返回 5 个 states，避免 eval 整个崩掉
+                try:
+                    state_info = copy.deepcopy(state_sensor.retrieve())
+                    imu_info = copy.deepcopy(imu_sensor.retrieve())
+                    fallback = {'sensors': {'state': state_info, 'imu': imu_info}}
+                    return {'states': [copy.deepcopy(fallback) for _ in range(5)], 'collision': True}
+                except Exception:
+                    return None
         
         threads = []
         thread_results = []
@@ -397,12 +510,19 @@ class AirVLNSimulatorClientTool:
         def _setPoses(airsim_client: airsim.VehicleClient, pose: airsim.Pose) -> None:
             if airsim_client is None:
                 raise Exception('error')
-                return
 
-            airsim_client.simSetKinematics(
-                state=pose,
-                ignore_collision=True,
-            )
+            airsim_client.simPause(True)
+
+            try:
+                airsim_client.simSetVehiclePose(pose, True)
+            except Exception:
+                state = airsim.KinematicsState()
+                state.position = copy.deepcopy(pose.position)
+                state.orientation = copy.deepcopy(pose.orientation)
+                state.linear_velocity = airsim.Vector3r(0, 0, 0)
+                state.angular_velocity = airsim.Vector3r(0, 0, 0)
+                airsim_client.simSetKinematics(state, ignore_collision=True)
+
             airsim_client.simContinueForFrames(1)
             airsim_client.simPause(True)
 

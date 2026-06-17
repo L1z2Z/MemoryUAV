@@ -46,7 +46,24 @@ def eval(model_wrapper: BaseModelWrapper, assist: Assist, eval_env: AirVLNENV, e
                 is_terminate = batch_state.check_batch_termination(t)
                 if is_terminate:
                     break
-                
+                # import pdb; pdb.set_trace() # 检查 inputs 是否包含所有 llava_llama_uav 所需的参数，数据类型是否匹配
+                """
+                inputs["instructions_units"][0] = 
+                {'input_ids': tensor([[    1, 17686,     0,     0,     0,     0],
+                        [    1,   263,  2654,  1559,     0,     0],
+                        [    1, 17686,   411,   263,  2654,  1559],
+                        [    1, 17686,     0,     0,     0,     0],
+                        [    1, 14089,     0,     0,     0,     0],
+                        [    1, 17686,     0,     0,     0,     0]], device='cuda:0'), 'attention_mask': tensor([[1, 1, 0, 0, 0, 0],
+                        [1, 1, 1, 1, 0, 0],
+                        [1, 1, 1, 1, 1, 1],
+                        [1, 1, 0, 0, 0, 0],
+                        [1, 1, 0, 0, 0, 0],
+                        [1, 1, 0, 0, 0, 0]], device='cuda:0')}
+                """
+                """
+                inputs.keys() = dict_keys(['input_ids', 'labels', 'attention_mask', 'orientations', 'prompts', 'instructions_units', 'reset_memory', 'images', 'historys', 'return_waypoints', 'use_cache'])
+                """
                 refined_waypoints = model_wrapper.run(inputs=inputs, episodes=batch_state.episodes, rot_to_targets=rot_to_targets) # key function
                 eval_env.makeActions(refined_waypoints)
                 outputs = eval_env.get_obs()

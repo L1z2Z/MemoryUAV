@@ -1,7 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from typing import Any, Dict, List, Tuple, Optional
+
+import os
+import json
+import math
+from collections import defaultdict
+import random
+import airsim
+import cv2
+import numpy as np
+import time
 
 class MemoryModule(nn.Module):
     def __init__(self, batch_size: int, memory_size = 1000, *args, **kwargs):
@@ -43,6 +53,90 @@ class MemoryModule(nn.Module):
                 print(f"Memory bank exceeded size {self.memory_size}, truncating {self.truncated_count} memories.")
                 self.memory_bank = self.memory_bank[:, -self.memory_size:]
 
+    def _retrieve(self):
+        """
+        retrieve corresponding memory for the latest 2 units
+            unit_id 0       1       2       3       4
+        mem_prog
+            0       retr    retr
+            1       fixed   retr    retr
+            2       fixed   fixed   retr    retr
+            3       fixed   fixed   fixed   retr    retr
+            4       fixed   fixed   fixed   fixed   retr
+        """
+        if self.memory_bank == None:
+            return
+        for b in range(self.batch_size):
+            print(f'batch_size = {self.batch_size}, b = {b}')
+            print(f'len(mem_progress) = {len(self.mem_progress)}')
+            print(f'len(instructions_units) = {len(self.instructions_units)}')
+            if self.mem_progress[b] >= len(self.instructions_units[b]):
+                continue
+            # retrieve memory for the current instruction unit
+            start_frame = self.retrieved_memories[b][self.mem_progress[b] - 1] + 3 if self.mem_progress[b] > 0 else 0
+            # retrieve the most similar frame for the current instruction unit
+            num_candidate_frames = self.memory_bank.shape[1] - start_frame
+            if num_candidate_frames <= 0:
+                continue
+            unit = self.instructions_units[b][self.mem_progress[b] + 0].unsqueeze(0).expand(num_candidate_frames, -1) # [num_candidate_frames, D]
+            cos = F.cosine_similarity(unit, self.memory_bank[b, start_frame:, :], dim=-1)  # [num_candidate_frames]
+            max_score = ((cos.max().item() + 1) * 0.5)
+            max_idx = cos.argmax().item()
+            if max_score > self.retrieve_threshold:
+                if len(self.retrieved_memories[b]) == self.mem_progress[b]:
+                    self.retrieved_memories[b].append(start_frame + max_idx)
+                else:
+                    self.retrieved_memories[b][self.mem_progress[b]] = start_frame + max_idx
+
+            # retrieve memory for the next instruction unit
+            if len(self.retrieved_memories[b]) == self.mem_progress[b]: # if current instruction unit is not retrieved, then skip retrieving the next instruction unit
+                continue
+            else: # current instruction unit is retrieved, then try to retrieve the next instruction unit
+                unit = self.instructions_units[b][self.mem_progress[b] + 1].unsqueeze(0).expand(num_candidate_frames, -1) if self.mem_progress[b] + 1 < len(self.instructions_units[b]) else None
+                if unit is not None:
+                    cos = F.cosine_similarity(unit, self.memory_bank[b, start_frame:, :], dim=-1)  # [num_candidate_frames]
+                    max_score = ((cos.max().item() + 1) * 0.5)
+                    max_idx = cos.argmax().item()
+                    if max_score > self.retrieve_threshold and self.mem_progress[b] < len(self.retrieved_memories[b]) and start_frame + max_idx > self.retrieved_memories[b][self.mem_progress[b]]:
+                        self.mem_progress[b] += 1
+    
+    def debug_retrieve(self):
+        """Only under the condition that batch_size = 1"""
+        if self.memory_bank == None:
+            return
+        assert self.batch_size == 1, "debug_retrieve only supports batch_size = 1"
+        print(f'len(mem_progress) = {len(self.mem_progress)}')
+        print(f'len(instructions_units) = {len(self.instructions_units)}')
+        if self.mem_progress[0] >= len(self.instructions_units[0]):
+            return
+        # retrieve memory for the current instruction unit
+        start_frame = self.retrieved_memories[0][self.mem_progress[0] - 1] + 3 if self.mem_progress[0] > 0 else 0
+        # retrieve the most similar frame for the current instruction unit
+        num_candidate_frames = self.memory_bank.shape[1] - start_frame
+        if num_candidate_frames <= 0:
+            return
+        unit = self.instructions_units[0][self.mem_progress[0] + 0].unsqueeze(0).expand(num_candidate_frames, -1) # [num_candidate_frames, D]
+        cos = F.cosine_similarity(unit, self.memory_bank[0, start_frame:, :], dim=-1)  # [num_candidate_frames]
+        max_score = ((cos.max().item() + 1) * 0.5)
+        max_idx = cos.argmax().item()
+        if max_score > self.retrieve_threshold:
+            if len(self.retrieved_memories[0]) == self.mem_progress[0]:
+                self.retrieved_memories[0].append(start_frame + max_idx)
+            else:
+                self.retrieved_memories[0][self.mem_progress[0]] = start_frame + max_idx
+
+        # retrieve memory for the next instruction unit
+        if len(self.retrieved_memories[0]) == self.mem_progress[0]: # if current instruction unit is not retrieved, then skip retrieving the next instruction unit
+            return
+        else: # current instruction unit is retrieved, then try to retrieve the next instruction unit
+            unit = self.instructions_units[0][self.mem_progress[0] + 1].unsqueeze(0).expand(num_candidate_frames, -1) if self.mem_progress[0] + 1 < len(self.instructions_units[0]) else None
+            if unit is not None:
+                cos = F.cosine_similarity(unit, self.memory_bank[0, start_frame:, :], dim=-1)  # [num_candidate_frames]
+                max_score = ((cos.max().item() + 1) * 0.5)
+                max_idx = cos.argmax().item()
+                if max_score > self.retrieve_threshold and self.mem_progress[0] < len(self.retrieved_memories[0]) and start_frame + max_idx > self.retrieved_memories[0][self.mem_progress[0]]:
+                    self.mem_progress[0] += 1
+
     def retrieve_memory(self, hidden_states: torch.Tensor):
         """
         retrieve and integrate memory for the current frame
@@ -52,49 +146,7 @@ class MemoryModule(nn.Module):
         if self.instructions_units is None or len(self.instructions_units) == 0:
             return hidden_states
         
-        def _retrieve():
-            """
-            retrieve corresponding memory for the latest 2 units
-                unit_id 0       1       2       3       4
-            mem_prog
-                0       retr    retr
-                1       fixed   retr    retr
-                2       fixed   fixed   retr    retr
-                3       fixed   fixed   fixed   retr    retr
-                4       fixed   fixed   fixed   fixed   retr
-            """
-            for b in range(self.batch_size):
-                if self.mem_progress[b] >= len(self.instructions_units[b]):
-                    continue
-                # retrieve memory for the current instruction unit
-                start_frame = self.retrieved_memories[b][self.mem_progress[b] - 1] + 3 if self.mem_progress[b] > 0 else 0
-                # retrieve the most similar frame for the current instruction unit
-                num_candidate_frames = self.memory_bank.shape[1] - start_frame
-                if num_candidate_frames <= 0:
-                    continue
-                unit = self.instructions_units[b][self.mem_progress[b] + 0].unsqueeze(0).expand(num_candidate_frames, -1) # [num_candidate_frames, D]
-                cos = F.cosine_similarity(unit, self.memory_bank[b, start_frame:, :], dim=-1)  # [num_candidate_frames]
-                max_score = ((cos.max().item() + 1) * 0.5)
-                max_idx = cos.argmax().item()
-                if max_score > self.retrieve_threshold:
-                    if len(self.retrieved_memories[b]) == self.mem_progress[b]:
-                        self.retrieved_memories[b].append(start_frame + max_idx)
-                    else:
-                        self.retrieved_memories[b][self.mem_progress[b]] = start_frame + max_idx
-
-                # retrieve memory for the next instruction unit
-                if len(self.retrieved_memories[b]) == self.mem_progress[b]: # if current instruction unit is not retrieved, then skip retrieving the next instruction unit
-                    continue
-                else: # current instruction unit is retrieved, then try to retrieve the next instruction unit
-                    unit = self.instructions_units[b][self.mem_progress[b] + 1].unsqueeze(0).expand(num_candidate_frames, -1) if self.mem_progress[b] + 1 < len(self.instructions_units[b]) else None
-                    if unit is not None:
-                        cos = F.cosine_similarity(unit, self.memory_bank[b, start_frame:, :], dim=-1)  # [num_candidate_frames]
-                        max_score = ((cos.max().item() + 1) * 0.5)
-                        max_idx = cos.argmax().item()
-                        if max_score > self.retrieve_threshold and self.mem_progress[b] < len(self.retrieved_memories[b]) and start_frame + max_idx > self.retrieved_memories[b][self.mem_progress[b]]:
-                            self.mem_progress[b] += 1
-
-        _retrieve() # retrieve corresponding memory for the latest 2 instruction units
+        self._retrieve() # retrieve corresponding memory for the latest 2 instruction units
         
         B, N_h, D = hidden_states.size()
         assert B == self.batch_size, "hidden_states.size(0) != memory_module.batch_size"
@@ -152,3 +204,38 @@ class MemoryModule(nn.Module):
         for b in range(self.batch_size):
             self.retrieved_memories.append([]) # [B][]
             self.mem_progress.append(0) # [B]
+
+    def debug_print(self):
+        """
+        Only tests whether the correct memories can be retrieved, without involving memory integration.
+        """
+        print('------------------ debug print start ------------------')
+        print(f"Memory bank shape: {self.memory_bank.shape if self.memory_bank is not None else None}")
+        print(f"mem_progress: {self.mem_progress}")
+        for i, instruction_units in enumerate(self.instructions_units):
+            print(f"{i}_Instruction_units: {instruction_units}") 
+        for i, retrieved in enumerate(self.retrieved_memories):    
+            print(f"{i}_retrieved_memories: {retrieved}")
+
+        # 计算相似度矩阵，并 print 出来。矩阵形状为 [N_units, N_mem] 其中 N_units 为 len(instructions_units[0])， N_mem 为 memory_bank 存储的记忆条数。矩阵中每个元素是对应的 instruction_unit 和 memory 的余弦相似度。
+        if self.memory_bank is None or len(self.instructions_units) == 0:
+            print('similarity_matrix: None')
+        else:
+            for b in range(min(self.batch_size, len(self.instructions_units))):
+                if len(self.instructions_units[b]) == 0:
+                    print(f'{b}_similarity_matrix: None')
+                    continue
+                if b >= self.memory_bank.shape[0]:
+                    print(f'{b}_similarity_matrix: skipped (memory bank batch mismatch)')
+                    continue
+                instruction_units = torch.stack(self.instructions_units[b], dim=0)
+                memory_units = self.memory_bank[b]
+                instruction_units = F.normalize(instruction_units, dim=-1)
+                memory_units = F.normalize(memory_units, dim=-1)
+                similarity_matrix = instruction_units @ memory_units.transpose(0, 1)
+                print(f'{b}_similarity_matrix shape: {tuple(similarity_matrix.shape)}')
+                print(similarity_matrix.detach().cpu())
+        print('------------------ debug print end ------------------')
+
+
+        

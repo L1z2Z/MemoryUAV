@@ -5,19 +5,19 @@ root_dir=. # TravelUAV directory
 model_dir=$root_dir/Model/LLaMA-UAV
 
 
-CUDA_VISIBLE_DEVICES=0 python -u $root_dir/src/vlnce_src/eval.py \
+CUDA_VISIBLE_DEVICES=3 python -u $root_dir/src/vlnce_src/eval.py \
     --run_type eval \
     --name TravelLLM \
     --gpu_id 0 \
     --simulator_tool_port 30000 \
     --DDP_MASTER_PORT 80005 \
-    --batchSize 2 \
+    --batchSize 1 \
     --always_help True \
     --use_gt True \
     --maxWaypoints 200 \
     --dataset_path /data6/shared/TravelUAV \
-    --eval_save_path /home/hhl/TravelUAV/TravelUAV/eval_results_6.7_uav \
-    --model_path $model_dir/work_dirs/llama-vid-7b-pretrain-224-uav-full-data-lora32-reproduce \
+    --eval_save_path /home/hhl/TravelUAV/TravelUAV/eval_results_6.7 \
+    --model_path $model_dir/work_dirs/reproduce \
     --model_base $model_dir/model_zoo/vicuna-7b-v1.5 \
     --vision_tower $model_dir/model_zoo/LAVIS/eva_vit_g.pth \
     --image_processor $model_dir/llamavid/processor/clip-patch14-224 \

@@ -27,6 +27,7 @@ from llamavid.model.language_model.llama_uav import LlamaUAVModel, LlamaUAVForCa
 from llamavid.constants import WAYPOINT_LABEL_TOKEN
 
 from llamavid.model.memory.memory_module import MemoryModule
+import pdb
 
 class LlavaConfig(LlamaConfig):
     model_type = "llava"
@@ -149,19 +150,19 @@ class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None, # no
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        use_cache: Optional[bool] = None, # False
+        output_attentions: Optional[bool] = None, # no
+        output_hidden_states: Optional[bool] = None, # no
         images: Optional[torch.FloatTensor] = None,
         prompts: Optional[List[str]] = None,
-        waypoints: Optional[torch.FloatTensor] = None,
+        waypoints: Optional[torch.FloatTensor] = None, # no
         orientations: Optional[torch.FloatTensor] = None,
         historys: Optional[torch.FloatTensor] = None,
-        return_dict: Optional[bool] = None,
-        return_waypoints: Optional[bool] = False,
+        return_dict: Optional[bool] = None, # no
+        return_waypoints: Optional[bool] = False, # True
         instructions_units: Optional[List[dict]] = None,
         reset_memory: bool = False
     ) -> Union[Tuple, CausalLMOutputWithPastUAV]:
@@ -214,9 +215,28 @@ class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
             return_dict=return_dict
         )
         hidden_states = outputs[0]
+
+        """----------- original module ---------"""
         waypoints_feat = hidden_states[labels == WAYPOINT_LABEL_TOKEN]
         predicted_waypoints = self.forward_waypoint(waypoints_feat)
+        """----------- original module ---------"""
+        
+        """--------- memory test ---------"""
+        B = hidden_states.shape[0]
+        D = hidden_states.shape[-1]
 
+        self.memory_module.debug_print()
+        if reset_memory:
+            pdb.set_trace()
+            self.memory_module.reset_memory(self.encode_instruction_units(instructions_units))
+
+        self.memory_module.debug_retrieve()
+
+        if instructions_units is not None:
+            self.memory_module.store_memory(waypoints_feat.view(B, -1, D))
+        """--------- memory test ---------"""
+
+        """----------- memory module ---------"""
         # B = hidden_states.shape[0]
         # D = hidden_states.shape[-1]
 
@@ -241,6 +261,7 @@ class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
 
         # if instructions_units is not None:
         #     self.memory_module.store_memory(raw_waypoints_feat)
+        """----------- memory module ---------"""
         
         if waypoints is None and return_waypoints:
             return predicted_waypoints

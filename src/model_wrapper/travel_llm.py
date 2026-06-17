@@ -98,17 +98,55 @@ class TravelModelWrapper(BaseModelWrapper):
 
     def run_llm_model(self, inputs):
         waypoints_llm = self.model(**inputs).cpu().to(dtype=torch.float32).numpy()
+
+        if not np.isfinite(waypoints_llm).all():
+            print("[nan_check] raw LLM waypoint has NaN/Inf:", waypoints_llm, flush=True)
+
         waypoints_llm_new = []
+
         for waypoint in waypoints_llm:
-            waypoint_new = waypoint[:3] / (1e-6 + np.linalg.norm(waypoint[:3])) * waypoint[3]
-            waypoints_llm_new.append(waypoint_new)
-        return np.array(waypoints_llm_new)
+            direction = waypoint[:3]
+            scale = waypoint[3]
+
+            direction_norm = np.linalg.norm(direction)
+
+            if (
+                not np.isfinite(direction).all()
+                or not np.isfinite(scale)
+                or not np.isfinite(direction_norm)
+                or direction_norm < 1e-6
+            ):
+                print("[nan_guard] invalid LLM waypoint, use fallback local target:", waypoint, flush=True)
+                waypoint_new = np.array([2.0, 0.0, 0.0], dtype=np.float32)
+            else:
+                waypoint_new = direction / (1e-6 + direction_norm) * scale
+
+            waypoints_llm_new.append(waypoint_new.astype(np.float32))
+
+        return np.array(waypoints_llm_new, dtype=np.float32)
 
     def run_traj_model(self, episodes, waypoints_llm_new, rot_to_targets):
-        inputs = prepare_data_to_traj_model(episodes, waypoints_llm_new, self.image_processor, rot_to_targets)
+        inputs = prepare_data_to_traj_model(
+            episodes,
+            waypoints_llm_new,
+            self.image_processor,
+            rot_to_targets
+        )
+
+        if not torch.isfinite(inputs["target"]).all():
+            print("[nan_check] traj_model input target has NaN/Inf:", inputs["target"], flush=True)
+
         waypoints_traj = self.traj_model(inputs, None)
+
+        if not torch.isfinite(waypoints_traj).all():
+            print("[nan_check] traj_model output has NaN/Inf:", waypoints_traj, flush=True)
+
         refined_waypoints = waypoints_traj.cpu().to(dtype=torch.float32).numpy()
         refined_waypoints = transform_to_world(refined_waypoints, episodes)
+
+        if not all(np.isfinite(np.asarray(wp, dtype=np.float32)).all() for wp in refined_waypoints):
+            print("[nan_check] transform_to_world output has NaN/Inf", flush=True)
+
         return refined_waypoints
     
     def eval(self):
