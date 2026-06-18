@@ -26,6 +26,9 @@ from llamavid.model.language_model.llama_uav import LlamaUAVModel, LlamaUAVForCa
 
 from llamavid.constants import WAYPOINT_LABEL_TOKEN
 
+from llamavid.model.memory.memory_module import MemoryModule
+import pdb
+
 class LlavaConfig(LlamaConfig):
     model_type = "llava"
 
@@ -49,6 +52,8 @@ class CosineDirectionLoss(nn.Module):
 class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
     config_class = LlavaConfig
     def __init__(self, config, **model_args):
+        self.batch_size = model_args.pop('batch_size', None)
+        assert self.batch_size is not None, "batch_size must be provided in model_args when initializing LlavaLlamaAttForCausalLM"
         super(LlamaUAVForCausalLM, self).__init__(config)
         self.model = LlavaAttLlamaModel(config)
         self.use_angle_and_norm_loss = model_args.get('use_angle_and_norm_loss', True)
@@ -74,6 +79,7 @@ class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
         self.angle_loss_func = CosineDirectionLoss()
         self.waypoint_loss_scale = 1.0
         self.special_token_dict = None
+        self.memory_module = MemoryModule(batch_size=self.batch_size)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -90,25 +96,77 @@ class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
         
         predicted_waypoints = self.waypoints_output(waypoints_feature)
         return predicted_waypoints
+    
+    @torch.no_grad()
+    def encode_instruction_units(self, instructions_units):
+        """
+        Convert tokenized instruction units into 4096-d hidden tensors.
+
+        input:
+            instructions_units: list[dict]
+                len = B
+                each dict:
+                    input_ids: [num_units, L]
+                    attention_mask: [num_units, L]
+
+        output:
+            encoded_units: list[list[Tensor]]
+                [B][num_units], each tensor is [4096]
+        """
+        if instructions_units is None:
+            return None
+
+        encoded_units = []
+
+        for item in instructions_units:
+            if item is None:
+                encoded_units.append([])
+                continue
+
+            input_ids = item["input_ids"].to(self.device)
+            attention_mask = item["attention_mask"].to(self.device)
+
+            unit_outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                use_cache=False,
+                output_attentions=False,
+                output_hidden_states=False,
+                return_dict=True,
+            )
+
+            unit_hidden = unit_outputs[0]  # [num_units, L, D]
+
+            mask = attention_mask.unsqueeze(-1).to(dtype=unit_hidden.dtype)
+            unit_vec = (unit_hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+
+            unit_vec = F.normalize(unit_vec.to(dtype=self.dtype), dim=-1)
+
+            encoded_units.append([unit_vec[i].detach() for i in range(unit_vec.size(0))])
+
+        return encoded_units
 
     def forward(
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None, # no
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        use_cache: Optional[bool] = None, # False
+        output_attentions: Optional[bool] = None, # no
+        output_hidden_states: Optional[bool] = None, # no
         images: Optional[torch.FloatTensor] = None,
         prompts: Optional[List[str]] = None,
-        waypoints: Optional[torch.FloatTensor] = None,
+        waypoints: Optional[torch.FloatTensor] = None, # no
         orientations: Optional[torch.FloatTensor] = None,
         historys: Optional[torch.FloatTensor] = None,
-        return_dict: Optional[bool] = None,
-        return_waypoints: Optional[bool] = False,
+        return_dict: Optional[bool] = None, # no
+        return_waypoints: Optional[bool] = False, # True
+        instructions_units: Optional[List[dict]] = None,
+        reset_memory: bool = False
     ) -> Union[Tuple, CausalLMOutputWithPastUAV]:
+        # import pdb; pdb.set_trace()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -157,8 +215,53 @@ class LlavaLlamaAttForCausalLM(LlamaUAVForCausalLM, LLaMAVIDMetaForCausalLM):
             return_dict=return_dict
         )
         hidden_states = outputs[0]
-        waypoints_feat = hidden_states[labels == WAYPOINT_LABEL_TOKEN]     
+
+        """----------- original module ---------"""
+        waypoints_feat = hidden_states[labels == WAYPOINT_LABEL_TOKEN]
         predicted_waypoints = self.forward_waypoint(waypoints_feat)
+        """----------- original module ---------"""
+        
+        """--------- memory test ---------"""
+        B = hidden_states.shape[0]
+        D = hidden_states.shape[-1]
+
+        self.memory_module.debug_print()
+        if reset_memory:
+            pdb.set_trace()
+            self.memory_module.reset_memory(self.encode_instruction_units(instructions_units))
+
+        self.memory_module.debug_retrieve()
+
+        if instructions_units is not None:
+            self.memory_module.store_memory(waypoints_feat.view(B, -1, D))
+        """--------- memory test ---------"""
+
+        """----------- memory module ---------"""
+        # B = hidden_states.shape[0]
+        # D = hidden_states.shape[-1]
+
+        # raw_waypoints_feat = hidden_states[labels == WAYPOINT_LABEL_TOKEN]
+        # raw_waypoints_feat = raw_waypoints_feat.view(B, -1, D)  # [B, N_wp, D]
+
+        # if reset_memory and instructions_units is not None:
+        #     encoded_instruction_units = self.encode_instruction_units(instructions_units)
+        #     self.memory_module.reset_memory(encoded_instruction_units)
+
+        # memory_waypoints_feat = raw_waypoints_feat
+
+        # if (
+        #     instructions_units is not None
+        #     and self.memory_module.memory_bank is not None
+        #     and self.memory_module.memory_bank.shape[1] > 0
+        # ):
+        #     memory_waypoints_feat = self.memory_module.retrieve_memory(raw_waypoints_feat)
+
+        # waypoints_feat = memory_waypoints_feat.reshape(-1, D)
+        # predicted_waypoints = self.forward_waypoint(waypoints_feat)
+
+        # if instructions_units is not None:
+        #     self.memory_module.store_memory(raw_waypoints_feat)
+        """----------- memory module ---------"""
         
         if waypoints is None and return_waypoints:
             return predicted_waypoints

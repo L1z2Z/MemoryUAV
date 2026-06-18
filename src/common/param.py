@@ -81,6 +81,7 @@ class ModelArguments:
     image_processor: Optional[str] = field(default=None)
     groundingdino_config: Optional[str] = field(default=None)
     groundingdino_model_path: Optional[str] = field(default=None)
+    batch_size: int = field(default=8)
     
     
 parser = transformers.HfArgumentParser((CommonArguments, ModelArguments, DataArguments))

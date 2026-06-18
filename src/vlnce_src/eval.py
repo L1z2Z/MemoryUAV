@@ -35,19 +35,36 @@ def eval(model_wrapper: BaseModelWrapper, assist: Assist, eval_env: AirVLNENV, e
             if env_batchs is None:
                 break
             batch_state = EvalBatchState(batch_size=eval_env.batch_size, env_batchs=env_batchs, env=eval_env, assist=assist)
-
+            # import pdb; pdb.set_trace() # 检查 batch_state 内容，尤其是 episodes 和 target_positions
             pbar.update(n=eval_env.batch_size)
             
-            inputs, rot_to_targets = model_wrapper.prepare_inputs(batch_state.episodes, batch_state.target_positions)
-
+            inputs, rot_to_targets = model_wrapper.prepare_inputs(batch_state.episodes, batch_state.target_positions, batch_state.instructions_units)
+            # import pdb; pdb.set_trace()
             for t in range(int(args.maxWaypoints) + 1):
                 logger.info('Step: {} \t Completed: {} / {}'.format(t, int(eval_env.index_data)-int(eval_env.batch_size), end_iter))
 
                 is_terminate = batch_state.check_batch_termination(t)
                 if is_terminate:
                     break
-                
-                refined_waypoints = model_wrapper.run(inputs=inputs, episodes=batch_state.episodes, rot_to_targets=rot_to_targets)
+                # import pdb; pdb.set_trace() # 检查 inputs 是否包含所有 llava_llama_uav 所需的参数，数据类型是否匹配
+                """
+                inputs["instructions_units"][0] = 
+                {'input_ids': tensor([[    1, 17686,     0,     0,     0,     0],
+                        [    1,   263,  2654,  1559,     0,     0],
+                        [    1, 17686,   411,   263,  2654,  1559],
+                        [    1, 17686,     0,     0,     0,     0],
+                        [    1, 14089,     0,     0,     0,     0],
+                        [    1, 17686,     0,     0,     0,     0]], device='cuda:0'), 'attention_mask': tensor([[1, 1, 0, 0, 0, 0],
+                        [1, 1, 1, 1, 0, 0],
+                        [1, 1, 1, 1, 1, 1],
+                        [1, 1, 0, 0, 0, 0],
+                        [1, 1, 0, 0, 0, 0],
+                        [1, 1, 0, 0, 0, 0]], device='cuda:0')}
+                """
+                """
+                inputs.keys() = dict_keys(['input_ids', 'labels', 'attention_mask', 'orientations', 'prompts', 'instructions_units', 'reset_memory', 'images', 'historys', 'return_waypoints', 'use_cache'])
+                """
+                refined_waypoints = model_wrapper.run(inputs=inputs, episodes=batch_state.episodes, rot_to_targets=rot_to_targets) # key function
                 eval_env.makeActions(refined_waypoints)
                 outputs = eval_env.get_obs()
                 batch_state.update_from_env_output(outputs)
@@ -57,7 +74,7 @@ def eval(model_wrapper: BaseModelWrapper, assist: Assist, eval_env: AirVLNENV, e
                 batch_state.update_metric()
                 
                 assist_notices = batch_state.get_assist_notices()
-                inputs, _ = model_wrapper.prepare_inputs(batch_state.episodes, batch_state.target_positions, assist_notices)
+                inputs, _ = model_wrapper.prepare_inputs(batch_state.episodes, batch_state.target_positions, batch_state.instructions_units, assist_notices)
 
         try:
             pbar.close()
@@ -85,6 +102,7 @@ if __name__ == "__main__":
 
     args.DistributedDataParallel = False
     
+    model_args.batch_size = args.batchSize
     model_wrapper = TravelModelWrapper(model_args=model_args, data_args=data_args)
     
     assist = Assist(always_help=args.always_help, use_gt=args.use_gt)

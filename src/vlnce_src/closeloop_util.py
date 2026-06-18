@@ -233,6 +233,11 @@ class EvalBatchState:
         self.skips = [False] * batch_size
         self.distance_to_ends = [[] for _ in range(batch_size)]
         self.envs_to_pause = []
+
+        if env_batchs[0]['instruction_units'] is not None:
+            self.instructions_units = [b['instruction_units'] for b in env_batchs]
+        else:
+            self.instructions_units = None
         
         self._initialize_batch_data()
 

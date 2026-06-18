@@ -26,7 +26,7 @@ from llamavid import conversation as conversation_lib
 def load_model(args):
     model_path = os.path.expanduser(args.model_path)
     model_name = get_model_name_from_path(model_path)
-    tokenizer, model, image_processor, _ = load_pretrained_model(model_path, args.model_base, model_name)
+    tokenizer, model, image_processor, _ = load_pretrained_model(model_path, args.model_base, model_name, args.batch_size)
     
     smarter_tokenizer_and_embedding_resize(special_tokens_list=['<wp>', '<his>'], tokenizer=tokenizer, model=model)
     model.get_special_token_id({'<wp>': tokenizer.encode('<wp>')[1], '<his>': tokenizer.encode('<his>')[1],
@@ -234,11 +234,11 @@ def transform_point(point, rotation_matrix):
     return np.dot(point, rotation_matrix)
 
 
-def prepare_data_to_inputs(episodes, tokenizer, image_processor, data_args, target_point, assist_notice = None):
+def prepare_data_to_inputs(episodes, tokenizer, image_processor, data_args, target_point, instruction_units: Optional[List[str]] = None, assist_notice = None):
 
     ori_sources = None
-    input_prompt = data_args.input_prompt
-    refine_prompt = data_args.refine_prompt
+    input_prompt = data_args.input_prompt # None
+    refine_prompt = data_args.refine_prompt # True
     sources = episodes
     ori_sources = copy.deepcopy(sources)
     processor = image_processor
@@ -289,12 +289,42 @@ def prepare_data_to_inputs(episodes, tokenizer, image_processor, data_args, targ
     cur_pos = ','.join([str(round(x, 1)) for x in cur_pos])
     # print('stage:', stage,'delta:', delta, 'cur_pos:', cur_pos)
     sources = preprocess_multimodal(copy.deepcopy([conversation]), data_args, stage=stage, delta=delta, cur_pos=cur_pos)
+    """
+    sources = 
+    [
+        [
+            {
+                'from': 'human', 
+                'value': 'Stage:take off\n\n
+                        Previous displacement:0.0,0.0,-1.0\n\n
+                        Current position:0.0,0.0,0.0\n\n
+                        Current image:<image>\n\n
+                        Instruction:There is a target in the right back of uav. Using your front as the x-axis and your right as the y-axis, The target is at a yaw angle of 137.0 degrees from you. The man is located in a neighborhood on grass nearby a red-roofed house with a white fence, trees, and a street visible; adjacent structures include red and gray houses, with a trampoline and lamppost also in the vicinity. Please control the drone and find the target.', 
+                'prompt': 'There is a target in the right back of uav. Using your front as the x-axis and your right as the y-axis, The target is at a yaw angle of 137.0 degrees from you. The man is located in a neighborhood on grass nearby a red-roofed house with a white fence, trees, and a street visible; adjacent structures include red and gray houses, with a trampoline and lamppost also in the vicinity. Please control the drone and find the target.'
+            }, 
+            {
+                'from': 'gpt', 
+                'value': ''
+            }
+        ]
+    ]
+    """
     data_dict = preprocess(
         sources,
         tokenizer,
         has_image=True,
         prompt=input_prompt,
         refine_prompt=refine_prompt)
+    """
+    data_dict = 
+    {
+        'input_ids': tensor [1, 205],
+        'labels': tensor [1, 205],
+        'prompt': ['Please pay attention to the obstacles in images and approach the object described below: The man is located in a neighborhood on grass nearby a red-roofed house with a white fence, trees, and a street visible; adjacent structures include red and gray houses, with a trampoline and lamppost also in the vicinity.']
+    }
+    data_dict.keys() = dict_keys(['input_ids', 'labels', 'prompt'])
+    """
+    # import pdb; pdb.set_trace()
     if 'prompt' in data_dict:
         prompt = data_dict['prompt']
     else:
@@ -302,7 +332,7 @@ def prepare_data_to_inputs(episodes, tokenizer, image_processor, data_args, targ
         
     data_dict = dict(input_ids=data_dict["input_ids"][0],
                         labels=data_dict["labels"][0])
-
+    data_dict['instruction_units'] = instruction_units
     data_dict['image'] = image
     data_dict['history_waypoint'] = torch.tensor(history_waypoint).view(-1)
     ori_0 = ori_sources[0]['sensors']['state']
@@ -312,7 +342,7 @@ def prepare_data_to_inputs(episodes, tokenizer, image_processor, data_args, targ
     
     if prompt is not None:
         data_dict['prompt'] = prompt
-        
+    
     return data_dict, rotation_to_target
 
 
@@ -349,6 +379,9 @@ def inputs_to_batch(tokenizer, instances: Sequence[Dict]) -> Dict[str, torch.Ten
         
         if 'orientation' in instances[0]:
             batch['orientations'] = torch.stack([instance['orientation'] for instance in instances])
+        
+        if 'instruction_units' in instances[0]:
+            batch['instructions_units'] = [instance['instruction_units'] for instance in instances]
 
         return batch
 
@@ -476,7 +509,7 @@ def preprocess_imgsp_uav(
             assert role == conv.roles[j % 2], f"{i}"
             
             # add guided prompt
-            if role==conv.roles[0]:
+            if role==conv.roles[0]: # if 'USER', not 'ASSISTANT'
                 guided_sent = sentence["prompt"].replace(DEFAULT_IMAGE_TOKEN, '').replace('\n', '')
                 if refine_prompt:
                     # only keep the useful part of the prompt

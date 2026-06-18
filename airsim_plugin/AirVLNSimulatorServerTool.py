@@ -20,7 +20,7 @@ AIRSIM_SETTINGS_TEMPLATE = {
   "SimMode": "Multirotor",
   "ClockSpeed": 10,
   "ViewMode": "NoDisplay",
-  "PhysiceEngineName": "ExternalPhysicsEngine",
+  "PhysicsEngineName": "ExternalPhysicsEngine",
   "Recording": {
     "RecordInterval": 1,
     "Enabled": False,
@@ -30,7 +30,7 @@ AIRSIM_SETTINGS_TEMPLATE = {
     "Drone_1": {
       "VehicleType": "SimpleFlight",
       "UseSerial": False,
-      "LockStep": True,
+      "LockStep": False,
       "AutoCreate": True,
       "X": 0,
       "Y": 0,
