@@ -106,7 +106,7 @@ class MemoryModule(nn.Module):
             return
         assert self.batch_size == 1, "debug_retrieve only supports batch_size = 1"
         print(f'len(mem_progress) = {len(self.mem_progress)}')
-        print(f'len(instructions_units) = {len(self.instructions_units)}')
+        print(f'len(instructions_units[0]) = {len(self.instructions_units[0])}')
         if self.mem_progress[0] >= len(self.instructions_units[0]):
             return
         # retrieve memory for the current instruction unit
@@ -232,9 +232,11 @@ class MemoryModule(nn.Module):
                 memory_units = self.memory_bank[b]
                 instruction_units = F.normalize(instruction_units, dim=-1)
                 memory_units = F.normalize(memory_units, dim=-1)
-                similarity_matrix = instruction_units @ memory_units.transpose(0, 1)
+                similarity_matrix = memory_units @ instruction_units.transpose(0, 1)
                 print(f'{b}_similarity_matrix shape: {tuple(similarity_matrix.shape)}')
                 print(similarity_matrix.detach().cpu())
+        # 需要计算并且 print 相似度矩阵，矩阵形状为 [N_mem, N_units]，其中 N_mem 为 memory_bank 存储的记忆条数， N_units 为 len(instructions_units[0])。矩阵中每个元素是对应的 memory 和 instruction_unit 的余弦相似度。
+        
         print('------------------ debug print end ------------------')
 
 
